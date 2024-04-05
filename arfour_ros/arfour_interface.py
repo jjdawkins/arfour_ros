@@ -5,13 +5,15 @@ import rclpy
 import rclpy.node
 import threading
 import time
+
+
 from pymavlink import mavutil
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu, Joy
 from std_msgs.msg import Float32MultiArray
 from arfour_msgs.msg import Setpoint
-from arfour_msgs.action import Takeoff
+#from arfour_msgs.action import Takeoff
 
 IDLE = -1
 READY = 0
@@ -48,8 +50,6 @@ class arfourInterface(rclpy.node.Node):
         self.yaw_joy = 0.0
         self.thrust_joy = 0.0
 
-
-
         self.pos_err_z = 0.0
         self.vel_err_x = 0.0
         self.vel_err_y = 0.0
@@ -66,13 +66,13 @@ class arfourInterface(rclpy.node.Node):
         self.mode = IDLE
 
     #    self.declare_parameter('my_parameter', 'world')
-        self.mav_conn = mavutil.mavlink_connection("/dev/ttyUSB0",baud=115200,input=False)
+        self.mav_conn = mavutil.mavlink_connection("/dev/ttyS0",baud=115200,input=False)
 
         self.imu_pub = self.create_publisher(Imu,'imu',10)
 
         self.set_sub = self.create_subscription(Setpoint,'setpoint',self.setpoint_callback,1)
         self.joy_sub = self.create_subscription(Joy,'joy',self.joy_callback,1)
-        self.mocap_sub = self.create_subscription(Odometry,'mocap/odom',self.mocap_callback,1)
+        self.mocap_sub = self.create_subscription(Odometry,'/daisy/mocap/odom',self.mocap_callback,1)
 
         self.timer = self.create_timer(0.05, self.send_loop)
 
@@ -82,13 +82,15 @@ class arfourInterface(rclpy.node.Node):
 
 
     def mocap_callback(self,msg):
-        self.pos_x = self.pose.pose.position.x
-        self.pos_y = self.pose.pose.position.y
-        self.pos_z = self.pose.pose.position.z
+        self.pos_x = msg.pose.pose.position.x
+        self.pos_y = msg.pose.pose.position.y
+        self.pos_z = msg.pose.pose.position.z
 
-        self.vel_x = self.twist.twist.linear.x
-        self.vel_y = self.twist.twist.linear.y
-        self.vel_z = self.twist.twist.linear.z
+        self.vel_x = msg.twist.twist.linear.x
+        self.vel_y = msg.twist.twist.linear.y
+        self.vel_z = msg.twist.twist.linear.z
+
+        #print(self.vel_x,self.vel_y,self.vel_z)
 
 
     def takeoff(self):
@@ -103,6 +105,8 @@ class arfourInterface(rclpy.node.Node):
 
         self.thrust_cmd = self.Kvel_z*(self.vel_err_z) + self.thrust_hover
         
+        time_from_boot = self.get_clock().now() - self.init_time
+        time_ms = int(time_from_boot.nanoseconds*1e-6)
         self.mav_conn.mav.manual_setpoint_send(time_ms,self.roll_cmd,self.pitch_cmd,self.yaw_cmd,self.thrust_cmd, self.mode,0)
 
         if(self.vel_z > self.takeoff_alt):
@@ -117,7 +121,7 @@ class arfourInterface(rclpy.node.Node):
         time_from_boot = self.get_clock().now() - self.init_time
 
         time_ms = int(time_from_boot.nanoseconds*1e-6)
-
+        print(self.mode)
 
         if(self.mode == TAKEOFF):
             self.takeoff()
