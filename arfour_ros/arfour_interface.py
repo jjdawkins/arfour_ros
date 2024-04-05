@@ -55,9 +55,15 @@ class arfourInterface(rclpy.node.Node):
         self.vel_err_y = 0.0
         self.vel_err_z = 0.0
 
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.vel_z = 0.0
+
         self.takeoff_land_spd = 0.5
         self.thrust_hover = 0.5
         self.takeoff_alt = 1.0
+        self.Kvel_x = 0.1
+        self.Kvel_y = 0.1
         self.Kvel_z = 0.1
         #self.Kpos_z = 
 
@@ -99,8 +105,8 @@ class arfourInterface(rclpy.node.Node):
         self.vel_err_y = 0 - self.vel_y
         self.vel_err_z = self.takeoff_land_spd - self.vel_z
 
-        self.pitch_cmd = self.Kv_x*(self.vel_err_x)
-        self.roll_cmd = -(self.Kv_y*self.vel_err_y)
+        self.pitch_cmd = self.Kvel_x*(self.vel_err_x)
+        self.roll_cmd = -(self.Kvel_y*self.vel_err_y)
         self.yaw_cmd = 0
 
         self.thrust_cmd = self.Kvel_z*(self.vel_err_z) + self.thrust_hover
