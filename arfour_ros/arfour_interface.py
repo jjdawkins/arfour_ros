@@ -7,9 +7,20 @@ import threading
 import time
 from pymavlink import mavutil
 
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu, Joy
 from std_msgs.msg import Float32MultiArray
 from arfour_msgs.msg import Setpoint
+from arfour_msgs.action import Takeoff
+
+IDLE = -1
+READY = 0
+TAKEOFF = 1
+HOVER = 2
+AUTO = 3
+MANUAL = 4
+LAND = 5
+ERROR = 6
 
 def saturate(val,min,max):
     if(val > max):
@@ -32,6 +43,28 @@ class arfourInterface(rclpy.node.Node):
         self.yaw_cmd = 0.0
         self.thrust_cmd = 0.0
 
+        self.roll_joy = 0.0
+        self.pitch_joy = 0.0
+        self.yaw_joy = 0.0
+        self.thrust_joy = 0.0
+
+
+
+        self.pos_err_z = 0.0
+        self.vel_err_x = 0.0
+        self.vel_err_y = 0.0
+        self.vel_err_z = 0.0
+
+        self.takeoff_land_spd = 0.5
+        self.thrust_hover = 0.5
+        self.takeoff_alt = 1.0
+        self.Kvel_z = 0.1
+        #self.Kpos_z = 
+
+        self.flying = False        
+
+        self.mode = IDLE
+
     #    self.declare_parameter('my_parameter', 'world')
         self.mav_conn = mavutil.mavlink_connection("/dev/ttyUSB0",baud=115200,input=False)
 
@@ -39,6 +72,7 @@ class arfourInterface(rclpy.node.Node):
 
         self.set_sub = self.create_subscription(Setpoint,'setpoint',self.setpoint_callback,1)
         self.joy_sub = self.create_subscription(Joy,'joy',self.joy_callback,1)
+        self.mocap_sub = self.create_subscription(Odometry,'mocap/odom',self.mocap_callback,1)
 
         self.timer = self.create_timer(0.05, self.send_loop)
 
@@ -46,31 +80,104 @@ class arfourInterface(rclpy.node.Node):
         self.read_thread.start()
         self.init_time = self.get_clock().now()
 
+
+    def mocap_callback(self,msg):
+        self.pos_x = self.pose.pose.position.x
+        self.pos_y = self.pose.pose.position.y
+        self.pos_z = self.pose.pose.position.z
+
+        self.vel_x = self.twist.twist.linear.x
+        self.vel_y = self.twist.twist.linear.y
+        self.vel_z = self.twist.twist.linear.z
+
+
+    def takeoff(self):
+
+        self.vel_err_x = 0 - self.vel_x
+        self.vel_err_y = 0 - self.vel_y
+        self.vel_err_z = self.takeoff_land_spd - self.vel_z
+
+        self.pitch_cmd = self.Kv_x*(self.vel_err_x)
+        self.roll_cmd = -(self.Kv_y*self.vel_err_y)
+        self.yaw_cmd = 0
+
+        self.thrust_cmd = self.Kvel_z*(self.vel_err_z) + self.thrust_hover
         
+        self.mav_conn.mav.manual_setpoint_send(time_ms,self.roll_cmd,self.pitch_cmd,self.yaw_cmd,self.thrust_cmd, self.mode,0)
+
+        if(self.vel_z > self.takeoff_alt):
+            self.mode = HOVER
+
+
+    def land(self):
+        pass 
 
     def send_loop(self):
 
         time_from_boot = self.get_clock().now() - self.init_time
 
         time_ms = int(time_from_boot.nanoseconds*1e-6)
-        roll_cmd = self.roll_cmd
-        pitch_cmd = self.pitch_cmd
-        yaw_cmd = self.yaw_cmd
-        thrust_cmd = self.thrust_cmd
-        mode_cmd = 0
-        print(roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd)
 
-        self.mav_conn.mav.manual_setpoint_send(time_ms,roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd, mode_cmd,0)
+
+        if(self.mode == TAKEOFF):
+            self.takeoff()
+
+        if(self.mode == LAND):
+            self.land()
+            
+        if(self.mode == MANUAL):
+
+            roll_cmd = self.roll_joy
+            pitch_cmd = self.pitch_joy
+            yaw_cmd = self.yaw_joy
+            thrust_cmd = self.thrust_joy
+            mode_cmd = self.mode
+            #print(roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd)
+            self.mav_conn.mav.manual_setpoint_send(time_ms,roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd, mode_cmd,0)
         
-     
+        if(self.mode == AUTO):
+            roll_cmd = self.roll_cmd
+            pitch_cmd = self.pitch_cmd
+            yaw_cmd = self.yaw_cmd
+            thrust_cmd = self.thrust_cmd
+            mode_cmd = self.mode
+            #print(roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd)
+            self.mav_conn.mav.manual_setpoint_send(time_ms,roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd, mode_cmd,0)            
 
     def joy_callback(self,msg):
 
-        self.roll_cmd = (-msg.axes[3])*self.max_roll
-        self.pitch_cmd = msg.axes[4]*self.max_pitch
-        self.yaw_cmd = msg.axes[0]*self.max_yawrate
-        self.thrust_cmd = msg.axes[1]
-        self.thrust_cmd = saturate(self.thrust_cmd,0.0,1.0)
+        self.roll_joy = (-msg.axes[3])*self.max_roll
+        self.pitch_joy = msg.axes[4]*self.max_pitch
+        self.yaw_joy = msg.axes[0]*self.max_yawrate
+        self.thrust_joy = msg.axes[1]
+        self.thrust_joy = saturate(self.thrust_joy,0.0,1.0)
+
+        if(msg.buttons[0]):     # A Button
+            pass
+
+        if(msg.buttons[1]):     # B Button
+            pass
+
+        if(msg.buttons[2]):     # X Button
+            if(self.flying):
+                self.mode = LAND
+            pass
+
+        if(msg.buttons[3]):     # Y Button
+            if(not self.flying):
+                self.mode = TAKEOFF
+
+
+        if(msg.buttons[4]):     # L Button
+            if(self.flying):
+                self.mode = AUTO
+            pass
+
+        if(msg.buttons[5]):     # R Button
+            #if(self.flying):
+            self.mode = MANUAL
+                                        
+
         
 
     def setpoint_callback(self,msg):
@@ -78,13 +185,13 @@ class arfourInterface(rclpy.node.Node):
         time_from_boot = self.get_clock().now() - self.init_time
 
         time_ms = int(time_from_boot.nanoseconds*1e-6)
-        roll_cmd = msg.roll
-        pitch_cmd = msg.pitch
-        yaw_cmd = msg.yaw
-        thrust_cmd = msg.thrust
-        mode_cmd = msg.mode
+        self.roll_cmd = msg.roll
+        self.pitch_cmd = msg.pitch
+        self.yaw_cmd = msg.yaw
+        self.thrust_cmd = msg.thrust
+        #mode_cmd = msg.mode
         
-        self.mav_conn.mav.manual_setpoint_send(time_ms,roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd, mode_cmd,0)
+        #self.mav_conn.mav.manual_setpoint_send(time_ms,roll_cmd,pitch_cmd,yaw_cmd,thrust_cmd, mode_cmd,0)
 
 
 
