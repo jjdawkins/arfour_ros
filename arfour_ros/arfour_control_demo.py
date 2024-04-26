@@ -98,8 +98,8 @@ class arfourInterface(rclpy.node.Node):
         self.Kpos_z = 0.06
         self.Kpos_z_d = 0.06
         self.Kpos_z_i = 0.02
-        self.Kvel_x = 0.25
-        self.Kvel_y = 0.25
+        self.Kvel_x = 0.28
+        self.Kvel_y = 0.28
         self.Kvel_z = 0.025
         self.Kvel_i_z = 0.02
         self.dt = 0.05
